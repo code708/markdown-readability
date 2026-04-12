@@ -1,0 +1,139 @@
+# Coverage
+coverage
+*.lcov
+.nyc_output
+
+# Dependency directory
+node_modules/
+
+# Optional npm cache
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# -----------------------------------------------------------------------------
+# IDEs and Editors
+# Current high-usage tools from the Stack Overflow Developer Survey 2025 (https://survey.stackoverflow.co/2025/technology/)
+# Ignore the repo-local files they commonly generate.
+
+# Cursor
+.cursor/
+
+# IntelliJ IDEA
+.idea/
+*.iml
+
+# JetBrains Fleet
+.fleet/
+
+# Visual Studio Code
+.vscode/
+.vscode-test/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Vim and Neovim
+*.swp
+*.swo
+*.swn
+Session.vim
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# -----------------------------------------------------------------------------
+# Agentic Coding Tools
+# Policy: shared policies that couple this repository to a specific agentic tool
+# are intentionally ignored, along with repo-local tool state.
+
+# Aider
+.aider.*
+.aiderignore
+
+# Amp
+AGENT.md
+
+# Claude Code
+CLAUDE*.md
+.claude/
+.mcp.json
+.worktreeinclude
+
+# Codex
+AGENTS.md
+.codex/
+
+# Continue
+.continue/
+.continuerc.json
+
+# Cursor CLI
+.cursorrules
+
+# Gemini CLI
+GEMINI.md
+.gemini/
+.geminiignore
+
+# Goose
+.goosehints
+
+# GitHub Copilot
+.github/copilot-instructions.md
+.github/instructions/
+
+# Pi agent
+.pi/
+
+# Sweep CLI
+SWEEP.md
+sweep.yaml
+
+# -----------------------------------------------------------------------------
+# Operating Systems
+# Ignore the directory-local files they commonly generate.
+# macOS
+**/.DS_Store
+._*
+.Spotlight-V100/
+.Trashes/
+.fseventsd/
+Icon\r
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.Trash-*/
+.nfs*
+.directory
+
+
+# -----------------------------------------------------------------------------
+# Local Development Assets
+.local
+test/.tmp/
+
+# Logs
+logs
+*.log*
+
+# environment variables
+.env
+.env.*
+!.env.example
