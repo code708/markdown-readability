@@ -1,0 +1,50 @@
+{
+	"name": "@code708/markdown-readability",
+	"version": "1.0.0",
+	"description": "Custom rules for markdownlint to improve readability of long markdown documents",
+	"main": "index.js",
+	"files": [
+		"index.js",
+		"src/",
+		"README.md",
+		"LICENSE"
+	],
+	"scripts": {
+		"test": "node test/test.js",
+		"lint": "markdownlint '**/*.md' --ignore node_modules",
+		"format": "prettier --write .",
+		"format:check": "prettier --check .",
+		"release:verify": "npm test && npm run lint && npm run format:check"
+	},
+	"keywords": [
+		"markdownlint",
+		"markdown",
+		"lint",
+		"custom-rules",
+		"readability"
+	],
+	"author": "code708",
+	"license": "ISC",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/code708/markdown-readability.git"
+	},
+	"bugs": {
+		"url": "https://github.com/code708/markdown-readability/issues"
+	},
+	"homepage": "https://github.com/code708/markdown-readability#readme",
+	"publishConfig": {
+		"access": "public"
+	},
+	"peerDependencies": {
+		"markdownlint": ">=0.34.0"
+	},
+	"devDependencies": {
+		"markdownlint": "^0.34.0",
+		"markdownlint-cli": "^0.40.0",
+		"prettier": "^3.8.2"
+	},
+	"engines": {
+		"node": ">=14.0.0"
+	}
+}
