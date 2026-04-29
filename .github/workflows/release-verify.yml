@@ -1,0 +1,125 @@
+name: Version Check
+
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+    branches: [main]
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      target_ref: ${{ steps.compute.outputs.target_ref }}
+    steps:
+      - id: compute
+        run: echo "target_ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
+  release_gate:
+    needs: prepare
+    uses: ./.github/workflows/release-gate.reuse.yml
+    with:
+      target_ref: ${{ needs.prepare.outputs.target_ref }}
+
+  verify_npm_auth:
+    runs-on: ubuntu-latest
+    needs: release_gate
+    if: ${{ github.event_name == 'merge_group' && needs.release_gate.outputs.try_publish }}
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - name: Verify npm token wiring (no publish)
+        run: |
+          set -euo pipefail
+          identity="$(npm whoami)"
+          echo "::notice::Authenticated with npm as: ${identity}"
+
+      - name: Verify npm write access for existing package
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME="${{ needs.release_gate.outputs.package_name }}"
+
+          if ! npm view "$PACKAGE_NAME" version >/dev/null 2>&1; then
+            echo "::notice::$PACKAGE_NAME not yet on npm — skipping write access check."
+            exit 0
+          fi
+
+          NPM_USER="$(npm whoami)"
+          permission="$(npm access list collaborators "$PACKAGE_NAME" --json \
+            | jq -r --arg user "$NPM_USER" '.[$user] // "none"')"
+
+          if [ "$permission" != "read-write" ]; then
+            echo "::error::npm user $NPM_USER lacks write access on $PACKAGE_NAME (has: $permission)."
+            exit 1
+          fi
+          echo "::notice::npm user $NPM_USER has $permission access on $PACKAGE_NAME."
+
+  verify_release_version:
+    runs-on: ubuntu-latest
+    needs: release_gate
+    steps:
+      - if: ${{ needs.release_gate.outputs.try_publish != 'true' }}
+        run: |
+          echo "::error::Cannot publish version ${{ needs.release_gate.outputs.version }} because packages v${{ needs.release_gate.outputs.version }} already exists in npm registry."
+          exit 1
+
+      - if: ${{ needs.release_gate.outputs.try_tag != 'true' }}
+        run: |
+          echo "::error::Cannot tag version ${{ needs.release_gate.outputs.version }} because git tag v${{ needs.release_gate.outputs.version }} already exists on origin."
+          exit 1
+
+      - if: ${{ needs.release_gate.outputs.try_release != 'true' }}
+        run: |
+          echo "::error::Cannot release version ${{ needs.release_gate.outputs.version }} because GitHub release v${{ needs.release_gate.outputs.version }} already exists."
+          exit 1
+
+  dry_run_npm_publish:
+    runs-on: ubuntu-latest
+    needs: [prepare, release_gate]
+    if: ${{ needs.release_gate.outputs.try_publish == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.target_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - run: npm run release:verify
+
+      - name: Verify npm publish dry-run
+        run: |
+          set -euo pipefail
+          if ! npm publish --dry-run;
+          then
+            echo "::error::npm publish --dry-run failed."
+            exit 1
+          fi
+
+      # TODO: What purpose does this serve?
+      - name: Preview changelog entry
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.release_gate.outputs.version }}"
+          release_notes="$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit}\
+           found{print}" CHANGELOG.md | sed '/^[[:space:]]*$/d')"
+          {
+            echo "## Dry-run release preview"
+            echo ""
+            echo "- Version: $VERSION"
+            echo "- Can publish to npm: ${{ needs.release_gate.outputs.try_publish }}"
+            echo "- Can tag on Git origin: ${{ needs.release_gate.outputs.try_tag }}"
+            echo "- Can create GitHub release: ${{ needs.release_gate.outputs.try_release }}"
+            echo ""
+            echo "### Release notes preview"
+            echo ""
+            printf '%s\n' "$release_notes"
+          } >> "$GITHUB_STEP_SUMMARY"

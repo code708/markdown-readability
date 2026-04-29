@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      try_publish:
+        description: Retry to publish on NPM
+        default: false
+        type: boolean
+      try_tag:
+        description: Retry to tag on Git
+        default: false
+        type: boolean
+      try_release:
+        description: Retry to release to GitHub
+        default: false
+        type: boolean
+
+# Prevent concurrent releases if two PRs land in quick succession
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release_gate:
+    uses: ./.github/workflows/release-gate.reuse.yml
+    with:
+      target_ref: ${{ github.sha }}
+
+  workflow_gate:
+    runs-on: ubuntu-latest
+    needs: release_gate
+    outputs:
+      try_publish: ${{ steps.gate.outputs.try_publish }}
+      try_tag: ${{ steps.gate.outputs.try_tag }}
+      try_release: ${{ steps.gate.outputs.try_release }}
+    env:
+      not_published: ${{ needs.release_gate.outputs.try_publish == 'true' }}
+      not_tagged: ${{ needs.release_gate.outputs.try_tag == 'true' }}
+      not_released: ${{ needs.release_gate.outputs.try_release == 'true' }}
+      is_pr_merge: ${{ github.event_name != 'workflow_dispatch' }}
+    steps:
+      - id: gate
+        run: |
+          try_publish="${{
+            env.not_published == 'true' 
+            && ( env.is_pr_merge == 'true' || inputs.try_publish )
+          }}"
+
+          try_tag="${{
+            env.not_tagged == 'true'
+            && ( env.is_pr_merge == 'true' || inputs.try_tag )
+          }}"
+
+          try_release="${{
+            env.not_released == 'true'
+            && ( env.is_pr_merge == 'true' || inputs.try_release )
+          }}""
+
+          if [[ "$try_publish" == 'false' && "$try_tag" == 'false' && "$try_release" == 'false' ]];
+          then
+            echo "::error::Triggered manual release without setting any deployment option to true"
+            echo "::notice::At least one of the input options should be true for this workflow to have an effect."
+            exit 1
+          fi
+
+          echo "try_publish=$try_publish" >> "$GITHUB_OUTPUT"
+          echo "try_tag=$try_tag" >> "$GITHUB_OUTPUT"
+          echo "try_release=$try_release" >> "$GITHUB_OUTPUT"
+
+  publish_and_release:
+    runs-on: ubuntu-latest
+    needs: [release_gate, workflow_gate]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Publish to npm
+        if: needs.workflow_gate.outputs.try_publish == 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create git tag
+        if: needs.workflow_gate.outputs.try_tag == 'true'
+        run: |
+          VERSION="${{ needs.release_gate.outputs.version }}"
+          TAG="v$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "🏷️ Created tag $TAG"
+
+      - name: Create GitHub release
+        if: needs.workflow_gate.outputs.try_release == 'true'
+        run: |
+          VERSION="${{ needs.release_gate.outputs.version }}"
+          TAG="v$VERSION"
+          NOTES="$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md \
+          | sed '/^[[:space:]]*$/d')"
+
+          if gh release view "$TAG" >/dev/null 2>&1;
+          then
+            echo "⚠️ Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes "$NOTES"
+            echo "✅ Successfully released $TAG"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}

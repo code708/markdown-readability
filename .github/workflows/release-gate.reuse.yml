@@ -1,0 +1,150 @@
+name: Release Check Status (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      target_ref:
+        description: Optional git ref to checkout before computing release status
+        required: false
+        type: string
+      verify_publish:
+        description: Check if npm package is published
+        default: true
+        type: boolean
+      verify_tag:
+        description: Check if tag exists on Git commit
+        default: true
+        type: boolean
+      verify_release:
+        description: Check if release exists on GitHub
+        default: true
+        type: boolean
+    outputs:
+      package_name:
+        description: Package name from current package.json
+        value: ${{ jobs.release_status.outputs.package_name }}
+      version:
+        description: Package version from current package.json
+        value: ${{ jobs.release_status.outputs.version }}
+      try_publish:
+        description: Package version is not yet published to npm
+        value: ${{ jobs.release_status.outputs.try_publish }}
+      try_tag:
+        description: Git tag does not yet exist on origin
+        value: ${{ jobs.release_status.outputs.try_tag }}
+      try_release:
+        description: Release does not yet exist on GitHub
+        value: ${{ jobs.release_status.outputs.try_release }}
+
+permissions:
+  contents: read
+
+jobs:
+  release_status:
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.package.outputs.name }}
+      version: ${{ steps.package.outputs.version }}
+      try_publish: ${{ steps.verify_publish.outputs.try_publish }}
+      try_tag: ${{ steps.verify_tag.outputs.try_tag }}
+      try_release: ${{ steps.verify_release.outputs.try_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref != '' && inputs.target_ref || github.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - run: npm run release:verify
+
+      - id: package
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAME="$(node -p 'require(\"./package.json\").name')"
+          echo "name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+          VERSION="$(node -p 'require(\"./package.json\").version')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - id: verify_publish
+        if: inputs.verify_publish
+        run: |
+          set -euo pipefail
+
+          VERSION=${{ steps.package.outputs.version }}
+          OUTPUT="try_publish=false"
+
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1;
+          then
+            echo "::warning::Version $VERSION is already published on npm."
+            echo "::warning::Bump the version in the PR."
+          else
+            status=$?
+            if [ "$status" -eq 1 ];
+            then
+              OUTPUT="try_publish=true"
+              echo "::notice::Version $VERSION could be published on npm."
+            else
+              echo "::error::\`npm view\` failed for ${PACKAGE_NAME}@${VERSION} (exit $status)."
+              exit 1
+            fi
+          fi
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+
+      - id: verify_tag
+        if: inputs.verify_tag
+        run: |
+          set -euo pipefail
+
+          TAG="v${{ steps.package.outputs.version }}"
+
+          OUTPUT="try_tag=false"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1;
+          then
+            echo "::warning::Tag $TAG already exists on origin."
+            echo "::warning::Resolve publish-tag drift in the PR"
+          else
+            status=$?
+            if [ "$status" -eq 2 ];
+            then
+              status="try_tag=true"
+              echo "::notice::$TAG could be tagged on Git's origin."
+            else
+              echo "::error::\`git ls-remote\` failed for origin and $TAG (exit $status)."
+            fi
+          fi
+          echo "$status" >> "$GITHUB_OUTPUT"
+
+      - id: verify_release
+        if: inputs.verify_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="v${{ steps.package.outputs.version }}"
+          OUTPUT="try_release=false"
+
+          if gh release view "$TAG" >/dev/null 2>&1;
+          then
+            echo "::warning::GitHub release $TAG already exists."
+            echo "::warning::Resolve tag-release drift in the PR"
+          else
+            status=$?
+            if [ "$status" -eq 1 ];
+            then
+              OUTPUT="try_release=true"
+              echo "::notice::$TAG could be released on GitHub."
+            else
+              echo "::error::\`gh release view\` failed for $TAG (exit $status)."
+              exit 1
+            fi
+          fi
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
