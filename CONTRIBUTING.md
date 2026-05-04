@@ -15,7 +15,7 @@ Thank you for your interest in contributing. This guide describes how to add a n
 2. **Verify ci checks are working locally:**
 
    ```bash
-   npm run push:check
+   npm run pr:dry
    ```
 
 3. **Try the demo:**
@@ -188,7 +188,7 @@ Concise conceptual rationale of 1) what problem the rule solves and 2) how it so
 #### Step 4: Validate Your Changes are Releasable
 
 ```bash
-npm run push:check
+npm run pr:dry
 ```
 
 ## Writing Tests
@@ -496,6 +496,59 @@ chore: Update astro dependencies to latest version
 
 Issue #789
 ```
+
+## Creating a Pull Request
+
+Pull requests are potential releases and should be created using the provided npm scripts as described in [PR Workflow](#pr-workflow).
+
+> The mechanism reads the branch's commits to decide whether the pull request needs a release. Bump-worthy commits derive the next semantic version from conventional commit messages, update `package.json`, prepend release notes to `CHANGELOG.md`, commit those generated changes, push the current branch, and create a release pull request to `main`. Hidden non-breaking commits create a non-release pull request without changing `package.json` or `CHANGELOG.md`.
+
+### Commit type → bump mapping
+
+| Type                                      | Section in `CHANGELOG.md` | Bump  |
+| ----------------------------------------- | ------------------------- | ----- |
+| `!` or `BREAKING-CHANGE: <description>`   | (unchanged)               | major |
+| `behav`                                   | New Behaviors             | minor |
+| `behavfix`                                | Bug Fixes                 | patch |
+| `perf`,`perffix`                          | Performance Improvements  | patch |
+| `docs`                                    | Documentation             | patch |
+| `chore`, `refac`, `style`, `test`, `cicd` | hidden                    | none  |
+| range with no bump-worthy commits         | hidden                    | none  |
+
+### PR Workflow
+
+Run `npm run pr:dry` to verify whether the branch requires a release and, when it does, whether the version and release notes are as intended. Run `npm run pr:create` to create a first-time pull request in the GitHub repository. Run `npm run pr:update` only for a branch that already has an open pull request.
+
+1. Work from the issue/feature branch that should become the pull request.
+2. Preview the next bump and changelog entry:
+
+   ```bash
+   npm run pr:dry
+   ```
+
+3. Create the pull request:
+
+   ```bash
+   npm run pr:create
+   ```
+
+   This runs the same test + lint + format gate as `pr:dry`. For release-worthy commits, it bumps `package.json`, prepends to `CHANGELOG.md`, creates `chore(release): X.Y.Z`, pushes the current branch, and opens a release pull request to `main`. For hidden non-breaking commits, it checks the working tree is clean, skips package/changelog writes, pushes the current branch, and opens an explicit non-release pull request.
+
+4. After rebasing or adding commits to an existing pull request branch, update the generated release commit:
+
+   ```bash
+   npm run pr:update
+   ```
+
+   This requires the branch to be rebased on top of `main` and to already have a pull request. It removes the branch-local `chore(release): X.Y.Z` commit when one exists, prepares a fresh release commit from the updated branch history, and force-pushes the branch with lease. If the updated branch contains only hidden non-breaking commits, it removes the old release commit, creates no replacement release commit, and still force-pushes the branch with lease.
+
+> To prepare the release commit locally (without pushing or opening a pull request):
+>
+> ```bash
+> npm run pr:prepare
+> ```
+
+The release script intentionally does not support forced releases or prerelease versions yet.
 
 ## Questions?
 

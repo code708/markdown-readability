@@ -14,7 +14,11 @@
 		"lint": "markdownlint '**/*.md' --ignore node_modules",
 		"format": "prettier --write .",
 		"format:check": "prettier --check .",
-		"push:check": "npm test && npm run lint && npm run format:check && echo '\n✅ Ready to push.\n' || { echo '\n❌ Do not push!\n'; exit 1; }"
+		"push:check": "npm test && npm run lint && npm run format:check && echo '\n✅ Ready to push.\n' || { echo '\n❌ Do not push!\n'; exit 1; }",
+		"pr:dry": "npm run push:check && node cicd/pull-request.js --dry-run",
+		"pr:prepare": "npm run push:check && node cicd/pull-request.js --prepare",
+		"pr:create": "npm run push:check && node cicd/pull-request.js --create",
+		"pr:update": "npm run push:check && node cicd/pull-request.js --update"
 	},
 	"keywords": [
 		"markdownlint",
@@ -40,6 +44,7 @@
 		"markdownlint": ">=0.34.0 <1.0.0"
 	},
 	"devDependencies": {
+		"@types/node": "^18.19.130",
 		"markdownlint": "^0.34.0",
 		"markdownlint-cli": "^0.40.0",
 		"prettier": "^3.8.2"

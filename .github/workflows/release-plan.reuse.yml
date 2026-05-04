@@ -1,0 +1,248 @@
+name: Summarizes the plan for a release, and serves as a decision gate (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      check_publish:
+        description: Check if npm package is published
+        default: true
+        type: boolean
+      check_tag:
+        description: Check if tag exists on Git commit
+        default: true
+        type: boolean
+      check_release:
+        description: Check if release exists on GitHub
+        default: true
+        type: boolean
+    outputs:
+      head_ref:
+        description: The PR branch's HEAD
+        value: ${{ jobs.prepare.outputs.head_ref }}
+      package_name:
+        description: Package name from current package.json
+        value: ${{ jobs.release_status.outputs.package_name }}
+      version:
+        description: Package version from current package.json
+        value: ${{ jobs.release_status.outputs.version }}
+      try_publish:
+        description: Package version is not yet published to npm
+        value: ${{ jobs.release_status.outputs.try_publish }}
+      try_tag:
+        description: Git tag does not yet exist on origin
+        value: ${{ jobs.release_status.outputs.try_tag }}
+      try_release:
+        description: Release does not yet exist on GitHub
+        value: ${{ jobs.release_status.outputs.try_release }}
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      head_ref: ${{ steps.commit_boundary.outputs.head }}
+      base_ref: ${{ steps.commit_boundary.outputs.base }}
+      base_version: ${{ steps.commit_boundary.outputs.base_version }}
+      planned_version: ${{ steps.release_decision.outputs.version }}
+      is_version_bump: ${{ steps.release_decision.outputs.is_bump }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: commit_boundary
+        run: |
+          set -euo pipefail 
+          head_commit="${{ github.sha }}"
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            default_branch="${{ github.event.repository.default_branch }}"
+
+            if [[ "${{ github.ref_type }}" == "branch" && "${{ github.ref_name }}" != "$default_branch" ]]; then
+              echo "::error::Dispatch on branch '${{ github.ref_name }}' is not supported; dispatch on '$default_branch' or a release tag."
+              exit 1
+            fi
+
+            if [[ "${{ github.ref_type }}" == "tag" ]]; then
+              if [[ ! "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                echo "::error::Dispatched tag '${{ github.ref_name }}' is not a release tag (expected 'vX.Y.Z')."
+                exit 1
+              elif ! git merge-base --is-ancestor "$head_commit" "origin/$default_branch"; then
+                echo "::error::Tagged commit ($head_commit) is not on default branch ($default_branch)."
+                exit 1
+              fi
+            fi
+
+            base_tag="$(git describe --tags --abbrev=0 --first-parent --match 'v[0-9]*.[0-9]*.[0-9]*' "${head_commit}^")"
+            base_commit="$(git rev-parse "${base_tag}^{commit}")"
+            base_version="$(git show "$base_commit:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+
+          elif [[ "${{ github.event_name }}" == "push" ]]; then
+            # If github.event.before is not a tagged commit, it must be from a non-release merge.
+            # All non-release merges on top of the last release is irrelevant for the next version  
+            # hence the boundary base is always OK to be github.event.before
+            base_commit="${{ github.event.before }}"
+            base_version="$(git show "$base_commit:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+
+          elif [[ "${{ github.event_name }}" == "merge_group" ]]; then
+            base_commit="${{ github.event.merge_group.base_sha }}"
+            base_version="$(git show "$base_commit:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+            
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base_commit="${{ github.event.pull_request.base.sha }}"
+            base_version="$(git show "$base_commit:package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')"
+
+          else
+            echo "::error::The trigger ${{ github.event_name }} is not supported."
+            exit 1
+          fi
+          {
+            echo "head=$head_commit"
+            echo "base=$base_commit"
+            echo "base_version=$base_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - id: release_decision
+        env:
+          HEAD_REF: ${{ steps.commit_boundary.outputs.head }}
+          BASE_REF: ${{ steps.commit_boundary.outputs.base }}
+          BASE_VERSION: ${{ steps.commit_boundary.outputs.base_version }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const pullRequest = require("./cicd/pull-request");
+            const deliveryPlan = pullRequest.planDelivery(
+              pullRequest.createContext(),
+              { headRef: process.env.HEAD_REF, baseRef: process.env.BASE_REF },
+              process.env.BASE_VERSION,
+            );
+            console.log(
+              deliveryPlan.kind === "release"
+                ? `is_bump=true\nversion=${deliveryPlan.release.version}`
+                : `is_bump=false`
+            );
+          ' >> "$GITHUB_OUTPUT"
+
+  release_status:
+    needs: prepare
+    if: needs.prepare.outputs.is_version_bump == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      package_name: ${{ steps.package.outputs.name }}
+      version: ${{ steps.package.outputs.version }}
+      try_publish: ${{ steps.check_publish.outputs.try_publish }}
+      try_tag: ${{ steps.check_tag.outputs.try_tag }}
+      try_release: ${{ steps.check_release.outputs.try_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.head_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - run: npm run push:check
+
+      - id: package
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAME="$(node -p 'require(\"./package.json\").name')"
+          echo "name=${PACKAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+          VERSION="$(node -p 'require(\"./package.json\").version')"
+          if [[ "$VERSION" == "${{ needs.prepare.outputs.planned_version }}" ]]; then
+            echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Package version ($VERSION) does not match expected version (${{ needs.prepare.outputs.planned_version }})"
+            echo "::notice::Run `npm run pr:update` to generate the correct version."
+            exit 1
+          fi
+
+      - id: check_publish
+        if: inputs.check_publish
+        run: |
+          set -euo pipefail
+
+          PACKAGE_NAME="${{ steps.package.outputs.name }}"
+          VERSION="${{ steps.package.outputs.version }}"
+          OUTPUT="try_publish=false"
+
+          if npm view "${PACKAGE_NAME}@${VERSION}" version >/dev/null 2>&1;
+          then
+            echo "::warning::Version $VERSION is already published on npm."
+            echo "::warning::Bump the version in the PR."
+          else
+            status=$?
+            if [ "$status" -eq 1 ];
+            then
+              OUTPUT="try_publish=true"
+              echo "::notice::Version $VERSION could be published on npm."
+            else
+              echo "::error::\`npm view\` failed for ${PACKAGE_NAME}@${VERSION} (exit $status)."
+              exit 1
+            fi
+          fi
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+
+      - id: check_tag
+        if: inputs.check_tag
+        run: |
+          set -euo pipefail
+
+          TAG="v${{ steps.package.outputs.version }}"
+          OUTPUT="try_tag=false"
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1;
+          then
+            echo "::warning::Tag $TAG already exists on origin."
+            echo "::warning::Resolve publish-tag drift in the PR"
+          else
+            status=$?
+            if [ "$status" -eq 2 ];
+            then
+              OUTPUT="try_tag=true"
+              echo "::notice::$TAG could be tagged on Git's origin."
+            else
+              echo "::error::\`git ls-remote\` failed for origin and $TAG (exit $status)."
+              exit 1
+            fi
+          fi
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+
+      - id: check_release
+        if: inputs.check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="v${{ steps.package.outputs.version }}"
+          OUTPUT="try_release=false"
+
+          if gh release view "$TAG" >/dev/null 2>&1;
+          then
+            echo "::warning::GitHub release $TAG already exists."
+            echo "::warning::Resolve tag-release drift in the PR"
+          else
+            status=$?
+            if [ "$status" -eq 1 ];
+            then
+              OUTPUT="try_release=true"
+              echo "::notice::$TAG could be released on GitHub."
+            else
+              echo "::error::\`gh release view\` failed for $TAG (exit $status)."
+              exit 1
+            fi
+          fi
+          echo "$OUTPUT" >> "$GITHUB_OUTPUT"

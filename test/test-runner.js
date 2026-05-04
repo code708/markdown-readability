@@ -66,6 +66,7 @@ const {
 			[
 				{ name: 'npm-package', headline: 'the npm packaging' },
 				{ name: 'consumer-docs', headline: 'the consumer docs consistency' },
+				{ name: 'cicd', headline: 'the pull-request.js release tooling' },
 			].forEach((s) =>
 				test(s.headline, require(path.join(__dirname, s.name + '.test'))),
 			);

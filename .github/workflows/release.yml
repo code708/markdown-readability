@@ -31,46 +31,46 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Guard against useless runs (not retrying any step)
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.try_publish && !inputs.try_tag && !inputs.try_release }}
+        if: github.event_name == 'workflow_dispatch' && !inputs.try_publish && !inputs.try_tag && !inputs.try_release
         run: |
           echo "::error::Triggered without setting any deployment option to true"
           echo "::error::At least one of the input options should be true for this workflow to have an effect."
           exit 1
 
       - name: Guard against publishing without tagging and releasing
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.try_publish && (!inputs.try_tag || !inputs.try_release) }}
+        if: github.event_name == 'workflow_dispatch' && inputs.try_publish && (!inputs.try_tag || !inputs.try_release)
         run: |
           echo "::error::Triggered to only publish the npm package"
           echo "::error::A release should be complete; A retry of npm publish should also retry git tag and a GitHub release"
           exit 1
 
       - name: Guard against tagging without releasing
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.try_publish && inputs.try_tag && !inputs.try_release }}
+        if: github.event_name == 'workflow_dispatch' && !inputs.try_publish && inputs.try_tag && !inputs.try_release
         run: |
           echo "::error::Triggered to only create a git tag"
           echo "::error::A release should be complete; A retry of git tag should also retry a GitHub release"
           exit 1
 
-  release_gate:
+  release_plan:
     needs: dispatch_input_validation
-    uses: ./.github/workflows/release-status.reuse.yml
+    uses: ./.github/workflows/release-plan.reuse.yml
     with:
-      target_ref: ${{ github.sha }}
       check_publish: ${{ github.event_name != 'workflow_dispatch' || inputs.try_publish }}
       check_tag: ${{ github.event_name != 'workflow_dispatch' || inputs.try_tag }}
       check_release: ${{ github.event_name != 'workflow_dispatch' || inputs.try_release }}
 
   dispatch_gate:
     runs-on: ubuntu-latest
-    needs: release_gate
+    needs: release_plan
+    if: needs.release_plan.outputs.version != ''
     outputs:
       try_publish: ${{ steps.gate.outputs.try_publish }}
       try_tag: ${{ steps.gate.outputs.try_tag }}
       try_release: ${{ steps.gate.outputs.try_release }}
     env:
-      not_published: ${{ needs.release_gate.outputs.try_publish == 'true' }}
-      not_tagged: ${{ needs.release_gate.outputs.try_tag == 'true' }}
-      not_released: ${{ needs.release_gate.outputs.try_release == 'true' }}
+      not_published: ${{ needs.release_plan.outputs.try_publish == 'true' }}
+      not_tagged: ${{ needs.release_plan.outputs.try_tag == 'true' }}
+      not_released: ${{ needs.release_plan.outputs.try_release == 'true' }}
       is_pr_merge: ${{ github.event_name != 'workflow_dispatch' }}
     steps:
       - id: gate
@@ -95,7 +95,8 @@ jobs:
 
   publish_and_release:
     runs-on: ubuntu-latest
-    needs: [release_gate, dispatch_gate]
+    needs: [release_plan, dispatch_gate]
+    if: needs.release_plan.outputs.version != ''
     permissions:
       contents: write
     steps:
@@ -118,7 +119,7 @@ jobs:
         if: needs.dispatch_gate.outputs.try_tag == 'true' && needs.dispatch_gate.outputs.try_release == 'true'
         run: |
           set -euo pipefail
-          TAG="v${{ needs.release_gate.outputs.version }}"
+          TAG="v${{ needs.release_plan.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$TAG"
@@ -129,7 +130,7 @@ jobs:
         if: needs.dispatch_gate.outputs.try_release == 'true'
         run: |
           set -euo pipefail
-          VERSION="${{ needs.release_gate.outputs.version }}"
+          VERSION="${{ needs.release_plan.outputs.version }}"
           TAG="v$VERSION"
           NOTES="$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md \
           | sed '/^[[:space:]]*$/d')"
@@ -141,3 +142,10 @@ jobs:
           echo "📦 Successfully released $TAG"
         env:
           GH_TOKEN: ${{ github.token }}
+
+  non_release_summary:
+    needs: release_plan
+    if: needs.release_plan.outputs.version == ''
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "::notice::The latest merge does not require a version bump. Hence no release is planned."

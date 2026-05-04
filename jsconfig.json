@@ -1,6 +1,7 @@
 {
 	"compilerOptions": {
-		"checkJs": true
+		"checkJs": true,
+		"types": ["node"]
 	},
-	"include": ["src", "test"]
+	"include": ["src", "test", "cicd"]
 }
