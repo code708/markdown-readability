@@ -1,0 +1,33 @@
+{
+  "name": "@code708/markdown-readability",
+  "version": "0.0.0",
+  "description": "Custom rules for markdownlint to improve readability of long markdown documents",
+  "main": "index.js",
+  "files": [
+    "index.js",
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {},
+  "keywords": [
+    "markdownlint",
+    "markdown",
+    "lint",
+    "custom-rules",
+    "readability"
+  ],
+  "author": "code708",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/code708/markdown-readability.git"
+  },
+  "bugs": {
+    "url": "https://github.com/code708/markdown-readability/issues"
+  },
+  "homepage": "https://github.com/code708/markdown-readability#readme",
+  "publishConfig": {
+    "access": "public"
+  }
+}
